@@ -793,6 +793,7 @@
                     <div class="error-msg" id="err-sa-charge-plan" style="display:none;">Select a subscription plan</div>
                 </div>
                 <div style="font-size:0.68rem;color:var(--grey);margin:-4px 0 10px;">Need a different plan? <a href="#" onclick="event.preventDefault();saCloseChargeModal();openSaPlansModal();">Manage Subscription Plans</a></div>
+                <div id="sa-charge-plan-switch-note" style="display:none;"></div>
             </div>
             <div class="input-group" style="margin-bottom:10px;">
                 <label id="sa-charge-amount-label">Amount (₹)</label>
@@ -4110,6 +4111,8 @@ function saOpenChargeModal(type){
     document.getElementById('sa-charge-amount').value = '';
     document.getElementById('sa-charge-note').value = '';
     hideErrEl('err-sa-charge-amount'); hideErrEl('err-sa-charge-note'); hideErrEl('err-sa-charge-plan');
+    const switchNoteEl = document.getElementById('sa-charge-plan-switch-note');
+    if (switchNoteEl) { switchNoteEl.style.display = 'none'; switchNoteEl.innerHTML = ''; }
     const btn = document.getElementById('sa-charge-confirm-btn');
     btn.innerText = meta.btnLabel; btn.style.background = meta.color;
 
@@ -4160,6 +4163,26 @@ function saOnChargePlanChange(){
     const plan = plans.find(p => p.id === planId);
     document.getElementById('sa-charge-amount').value = plan ? plan.price : '';
     hideErrEl('err-sa-charge-plan');
+    // If this plan is different from the wallet's current active plan, and the current plan still
+    // has days left, warn the Super Admin: the new plan's duration counts from today, not from the
+    // current plan's remaining time — so those leftover days will be lost by switching now.
+    const noteEl = document.getElementById('sa-charge-plan-switch-note');
+    noteEl.style.display = 'none';
+    noteEl.innerHTML = '';
+    if (plan && _saWalletAdminId) {
+        const wallet = saGetWallet(_saWalletAdminId);
+        const sub = wallet.subscription;
+        if (sub && sub.planId && sub.planId !== plan.id && sub.nextRenewalDate) {
+            const daysLeft = Math.ceil((new Date(sub.nextRenewalDate) - new Date()) / 86400000);
+            if (daysLeft > 0) {
+                noteEl.style.display = 'block';
+                noteEl.innerHTML = '<div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:10px;padding:10px;font-size:0.72rem;line-height:1.5;color:#92400e;margin:-2px 0 10px;">' +
+                    '⚠️ <strong>Note:</strong> Switching from "' + sub.planName + '" to "' + plan.name + '" will count the new plan\'s ' + plan.durationDays + ' day(s) from today — not added to the ' + daysLeft + ' day(s) still remaining on the current plan. The Admin will lose these ' + daysLeft + ' day(s) if this renewal is accepted now.<br><br>' +
+                    'To avoid this loss, request a plan change closer to when the current plan is about to end (1–2 day(s) left) — that way little to no remaining time goes to waste.' +
+                '</div>';
+            }
+        }
+    }
 }
 function saCloseChargeModal(){ document.getElementById('sa-charge-modal').style.display = 'none'; _saChargeType = null; }
 function saConfirmChargeModal(){
