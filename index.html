@@ -1739,6 +1739,69 @@ function saRequestWalletRenewalCharge(adminId, amount, note){
     return req;
 }
 
+// ===== SUBSCRIPTION ENFORCEMENT MIRROR (Super Admin side) =====
+// Same thresholds/logic as the Admin dashboard's getSubscriptionEnforcementInfo(): applies only
+// when Auto-Renew is OFF and the subscription is genuinely expired with no Accept yet.
+//   Day 0–5 since expiry → Level 0 (grace)   Day 6–8 → Level 1   Day 9–10 → Level 2   Day 11+ → Level 3 (locked)
+const SA_ENFORCE_STUDENT_DAY = 5, SA_ENFORCE_CONFIG_DAY = 8, SA_ENFORCE_LOCK_DAY = 10;
+function saGetSubscriptionEnforcementInfo(wallet){
+    const none = { level: 0, daysSinceExpiry: 0 };
+    if (!wallet || !wallet.subscription || !wallet.subscription.planId || !wallet.subscription.nextRenewalDate) return none;
+    if (wallet.subscription.autoRenew) return none;
+    const daysSinceExpiry = Math.floor((new Date() - new Date(wallet.subscription.nextRenewalDate)) / 86400000);
+    if (daysSinceExpiry <= SA_ENFORCE_STUDENT_DAY) return none;
+    let level = 1;
+    if (daysSinceExpiry > SA_ENFORCE_CONFIG_DAY) level = 2;
+    if (daysSinceExpiry > SA_ENFORCE_LOCK_DAY) level = 3;
+    return { level: level, daysSinceExpiry: daysSinceExpiry };
+}
+// The ONLY way to clear a Level-3 lock (dashboard fully locked, Admin can't even log in to Accept
+// it themselves). Super Admin accepts the pending renewal request directly on the Admin's behalf —
+// same deduction + subscription-extension logic as the Admin's own Accept button, just triggered
+// from this side. The wallet balance can go negative here too, same as every other charge type.
+function saAcceptRenewalOnBehalfOfAdmin(adminId, reqId){
+    const data = saReadLibrary(adminId) || {};
+    const wallet = saEnsureWalletShape(data.wallet);
+    const req = (wallet.chargeRequests || []).find(r => r.id === reqId && r.status === 'Pending' && r.type === 'renewal');
+    if (!req) { alert('This renewal request is no longer pending.'); return; }
+    const authorityGranted = !!(wallet.renewalAuthorityGrantedToSuperAdmin && wallet.renewalAuthorityGrantedToSuperAdmin.granted);
+    if (!authorityGranted) { alert('The Admin has not granted authority to accept this on their behalf yet. They can do this from their own dashboard\'s lock screen.'); return; }
+    const info = saGetSubscriptionEnforcementInfo(wallet);
+    const planNote = req.planName ? (' (' + req.planName + ' plan, ' + req.durationDays + ' days)') : '';
+    if (!confirm('Accept this renewal charge on behalf of the Admin' + planNote + '?\n\n₹' + req.amount + ' will be deducted from their wallet immediately (balance can go negative if insufficient), the subscription will be renewed, and their dashboard will be unlocked.\n\nThis action is being taken under the authority the Admin has granted to the Super Admin because their dashboard is locked and they cannot Accept it themselves.')) return;
+    const txnId = saGenerateWalletTxnId();
+    const balanceBefore = wallet.balance || 0;
+    wallet.balance = balanceBefore - req.amount;
+    wallet.transactions = wallet.transactions || [];
+    wallet.transactions.push({ id: txnId, type: 'debit', chargeType: 'renewal', amount: req.amount, balanceAfter: wallet.balance, date: new Date().toISOString(), note: (req.note || '') + ' — Accepted by Super Admin (authority granted by Admin, dashboard was locked)', by: 'Super Admin', isSuperAdminCharge: true });
+    wallet.renewalAuthorityGrantedToSuperAdmin = { granted: false, grantedAt: null, grantedBy: null };
+    req.status = 'Approved';
+    req.decidedAt = new Date().toISOString();
+    req.acceptedBySuperAdminAuthority = true;
+    let next = null;
+    if (req.planId && req.durationDays) {
+        wallet.subscription = wallet.subscription || { planId: null, planName: null, durationDays: null, startDate: null, nextRenewalDate: null, autoRenew: false, history: [] };
+        const now = new Date();
+        const currentNext = wallet.subscription.nextRenewalDate ? new Date(wallet.subscription.nextRenewalDate) : null;
+        const samePlan = wallet.subscription.planId === req.planId;
+        const base = (samePlan && currentNext && currentNext > now) ? currentNext : now;
+        next = new Date(base.getTime() + req.durationDays * 24 * 60 * 60 * 1000);
+        wallet.subscription.planId = req.planId;
+        wallet.subscription.planName = req.planName;
+        wallet.subscription.durationDays = req.durationDays;
+        if (!wallet.subscription.startDate) wallet.subscription.startDate = now.toISOString();
+        wallet.subscription.nextRenewalDate = next.toISOString();
+        wallet.subscription.history = wallet.subscription.history || [];
+        const invoiceNo = 'INV-' + now.getFullYear() + '-' + String(wallet.subscription.history.length + 1).padStart(4, '0');
+        wallet.subscription.history.push({ invoiceNo: invoiceNo, planId: req.planId, planName: req.planName, amount: req.amount, durationDays: req.durationDays, renewedAt: now.toISOString(), nextRenewalDate: next.toISOString(), txnId: txnId, acceptedBySuperAdminAuthority: true });
+    }
+    data.wallet = wallet;
+    saWriteLibrary(adminId, data);
+    const nextStr = next ? next.toLocaleDateString() : '—';
+    alert('✅ Renewal accepted on behalf of the Admin.\n\n₹' + req.amount + ' deducted. New Balance: ₹' + wallet.balance + '\nNext Renewal: ' + nextStr + '\n\nThe Admin\'s dashboard will unlock the next time they log in or refresh.');
+    if (typeof renderSaWalletModal === 'function') renderSaWalletModal();
+}
+
 // ===== SUBSCRIPTION PLANS (Super Admin only — Monthly/Quarterly/Yearly etc, each with a
 // fixed price + duration in days). Stored once for the whole platform (not per-admin), shared
 // across the Super Admin and Admin dashboards via the same localStorage key so both always see
@@ -4029,6 +4092,37 @@ function saRenderWalletSubscriptionCard(wallet){
                 '<button onclick="saDownloadSubscriptionInvoice()" style="width:100%;background:#fff;border:1px solid ' + s.border + ';color:' + s.text + ';padding:7px 10px;border-radius:8px;font-size:0.7rem;font-weight:800;cursor:pointer;">📄 Download Invoice</button>' +
             '</div>'
         ) : '') +
+    '</div>' +
+    saRenderSubscriptionEnforcementPanel(wallet);
+}
+// Mirrors the Admin dashboard's restriction ladder for the Super Admin to see, and — at Level 3
+// (dashboard fully locked, Admin can no longer log in to Accept it themselves) — surfaces the
+// override action. This only ever appears when Auto-Renew is OFF; if it's ON, the subscription
+// auto-renews on its own and this ladder never engages.
+function saRenderSubscriptionEnforcementPanel(wallet){
+    const info = saGetSubscriptionEnforcementInfo(wallet);
+    if (info.level === 0) return '';
+    const pendingRenewal = (wallet.chargeRequests || []).find(r => r.type === 'renewal' && r.status === 'Pending');
+    if (info.level < 3) {
+        const label = info.level === 2 ? 'Registrations, fee collection AND system configuration are blocked' : 'New registrations, student edits and fee collection are blocked';
+        return '<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:0.72rem;color:#9a3412;line-height:1.5;">' +
+            '⚠️ <strong>Restricted (' + info.daysSinceExpiry + ' day(s) overdue):</strong> ' + label + ' on the Admin\'s dashboard until they Accept the pending Renewal Charge.' +
+        '</div>';
+    }
+    // Level 3 — locked
+    const authorityGranted = !!(wallet.renewalAuthorityGrantedToSuperAdmin && wallet.renewalAuthorityGrantedToSuperAdmin.granted);
+    let actionHtml;
+    if (!authorityGranted) {
+        actionHtml = '<div style="font-size:0.72rem;color:#991b1b;line-height:1.5;background:#fff;border:1px dashed #fca5a5;border-radius:8px;padding:8px 10px;">⏳ Waiting for the Admin to grant authority. They will see a "🔑 Grant Authority to Super Admin to Accept" option the next time they try to log in and hit the lock screen — the Accept option below will appear here only after they do.</div>';
+    } else if (pendingRenewal) {
+        actionHtml = '<button onclick="saAcceptRenewalOnBehalfOfAdmin(\'' + String(_saWalletAdminId).replace(/'/g, "\\'") + '\',\'' + pendingRenewal.id + '\')" style="width:100%;background:#dc2626;color:#fff;border:none;padding:10px;border-radius:10px;font-weight:800;font-size:0.74rem;cursor:pointer;">✅ Accept by Super Admin (Authority granted by Admin)</button>';
+    } else {
+        actionHtml = '<div style="font-size:0.72rem;color:#991b1b;line-height:1.5;">Authority has been granted, but there is no pending Renewal Charge for this wallet — send one first using "Request Renewal Charge" below, then this option will appear.</div>';
+    }
+    return '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;padding:14px;margin-bottom:14px;">' +
+        '<div style="font-size:0.78rem;font-weight:900;color:#991b1b;margin-bottom:4px;">🔒 Dashboard Locked (' + info.daysSinceExpiry + ' day(s) overdue)</div>' +
+        '<div style="font-size:0.72rem;color:#991b1b;line-height:1.5;margin-bottom:10px;">The Admin can no longer log in to Accept this themselves.</div>' +
+        actionHtml +
     '</div>';
 }
 // Builds a printable/downloadable invoice for one subscription renewal and triggers a browser
