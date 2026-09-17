@@ -1715,6 +1715,17 @@ function saRequestWalletRenewalCharge(adminId, amount, note){
     if (wallet.status !== 'active') {
         throw new Error('A renewal charge can only be requested while the wallet is Active.' + (wallet.status === 'deactivated' ? ' The wallet is currently Deactivated — it must be reactivated by the Admin first.' : ''));
     }
+    // A wallet can only ever have ONE live renewal request waiting for a decision. If an earlier
+    // renewal request (e.g. for a different plan, picked by mistake) is still Pending, sending a
+    // new one supersedes it — otherwise both would sit Pending forever and, if Auto-Renew is ON,
+    // BOTH would get silently accepted (double charge, subscription extended twice).
+    (wallet.chargeRequests || []).forEach(r => {
+        if (r.type === 'renewal' && r.status === 'Pending') {
+            r.status = 'Superseded';
+            r.decidedAt = new Date().toISOString();
+            r.decisionReason = 'Replaced by a newer renewal charge request from the Super Admin.';
+        }
+    });
     const req = {
         id: 'WCR' + Date.now() + Math.floor(Math.random() * 1000), type: 'renewal', amount: amount,
         note: note || '', status: 'Pending', requestedAt: new Date().toISOString(),
@@ -4121,6 +4132,7 @@ function saOpenChargeModal(type){
         const sub = wallet.subscription;
         const info = saSubscriptionStatusInfo(sub);
         const colors = { none: '#64748b', ok: '#16a34a', expiring: '#d97706', expired: '#dc2626' };
+        const alreadyPendingReq = (wallet.chargeRequests || []).find(r => r.type === 'renewal' && r.status === 'Pending');
         subStatusEl.style.display = 'block';
         subStatusEl.innerHTML = '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px;font-size:0.74rem;">' +
             '<div style="font-weight:800;margin-bottom:2px;">📅 Current Subscription</div>' +
@@ -4128,6 +4140,7 @@ function saOpenChargeModal(type){
                 ? ('<div>Plan: <strong>' + sub.planName + '</strong></div><div>Next Renewal: ' + saFmtWalletDate(sub.nextRenewalDate) + '</div>')
                 : '<div>No plan applied yet.</div>') +
             '<div style="color:' + colors[info.cls] + ';font-weight:800;margin-top:2px;">' + info.label + '</div>' +
+            (alreadyPendingReq ? ('<div style="color:#b45309;font-weight:800;margin-top:6px;border-top:1px dashed #fbbf24;padding-top:6px;">⚠️ A renewal request (' + (alreadyPendingReq.planName || '') + ', ₹' + alreadyPendingReq.amount + ') is already Pending with this Admin. Sending this new request will replace it.</div>') : '') +
         '</div>';
         if (!plans.length) {
             planSelect.innerHTML = '<option value="">No active plans — create one first</option>';
@@ -4197,7 +4210,9 @@ function saRenderWalletChargeRequests(wallet){
                 ? '<span style="color:#16a34a;font-weight:800;">✅ Approved &amp; Deducted</span>'
                 : rq.status === 'Rejected'
                     ? '<span style="color:#dc2626;font-weight:800;">❌ Rejected by Admin</span>'
-                    : '<span style="color:#16a34a;font-weight:800;">✅ Deducted</span>';
+                    : rq.status === 'Superseded'
+                        ? '<span style="color:#64748b;font-weight:800;">↩️ Replaced by a newer request</span>'
+                        : '<span style="color:#16a34a;font-weight:800;">✅ Deducted</span>';
         const label = (CHARGE_LABELS[rq.type] || 'Charge') + (rq.planName ? ' (' + rq.planName + ')' : '');
         return `<div style="background:#fff;border:1px solid #fed7aa;border-radius:10px;padding:10px;margin-bottom:8px;font-size:0.74rem;">
             <div style="display:flex;justify-content:space-between;"><strong>${label} — ₹${rq.amount}</strong><span>${saFmtWalletDate(rq.date)}</span></div>
