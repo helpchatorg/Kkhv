@@ -1093,16 +1093,13 @@
                 <div style="font-size:0.66rem;color:var(--grey);margin-top:8px;text-align:center;">Wallet limit: ₹1,00,000 max balance</div>
             </div>
 
-            <div id="sa-wallet-subscription-card"></div>
-
             <div id="sa-wallet-charges-panel" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:14px;margin-bottom:18px;">
                 <div style="font-size:0.78rem;font-weight:800;margin-bottom:10px;color:#9a3412;">🧾 Deduct Charges</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     <button id="sa-charge-btn-maintenance" style="flex:1;min-width:140px;background:#ea580c;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:0.76rem;cursor:pointer;" onclick="saOpenChargeModal('maintenance')">🔧 Annual Maintenance</button>
                     <button id="sa-charge-btn-penalty" style="flex:1;min-width:140px;background:#dc2626;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:0.76rem;cursor:pointer;" onclick="saOpenChargeModal('penalty')">⚠️ Apply Penalty</button>
-                    <button id="sa-charge-btn-renewal" style="flex:1;min-width:140px;background:#0369a1;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:0.76rem;cursor:pointer;" onclick="saOpenChargeModal('renewal')">🔄 Request Renewal Charge</button>
                 </div>
-                <div id="sa-charge-limit-hint" style="font-size:0.66rem;color:#9a3412;margin-top:8px;line-height:1.5;">Maintenance &amp; Penalty deduct immediately (balance may go negative). Renewal charges are built from a <a href="#" onclick="event.preventDefault();openSaPlansModal();" style="color:#9a3412;">Subscription Plan</a> and sent to the Admin, who must Accept before the amount is deducted — once accepted, the plan's duration is added to the wallet's subscription.</div>
+                <div id="sa-charge-limit-hint" style="font-size:0.66rem;color:#9a3412;margin-top:8px;line-height:1.5;">Maintenance &amp; Penalty deduct immediately (balance may go negative). Need to renew a subscription? Use <a href="#" onclick="event.preventDefault();var _sid=_saWalletAdminId;closeSaWalletModal();openSaSubscriptionModal(_sid);" style="color:#9a3412;">📋 Subscription</a>.</div>
             </div>
 
             <div id="sa-wallet-freeze-panel" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:14px;margin-bottom:18px;">
@@ -1137,6 +1134,30 @@
             <div id="sa-wallet-htab-panel-lock" class="sa-wallet-history-tab-panel" style="display:none;">
                 <div id="sa-wallet-lock-history-panel"></div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== ADMIN SUBSCRIPTION MODAL (Super Admin: plan status, Auto-Renew view, invoices, enforcement) ===== -->
+<div id="sa-subscription-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:6000;padding:20px;box-sizing:border-box;align-items:center;justify-content:center;">
+    <div class="sa-modal-inner" style="margin:0;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;max-width:480px;">
+        <div class="sa-modal-head">
+            <div class="sa-modal-head-top">
+                <div>
+                    <h3>💳 Subscription</h3>
+                    <div style="font-size:0.72rem;color:#e0e7ff;font-weight:700;margin-top:2px;">Library: <span id="sa-subscription-admin-id" class="mono"></span></div>
+                </div>
+                <button class="sa-close-btn" onclick="closeSaSubscriptionModal()">✕ Close</button>
+            </div>
+        </div>
+        <div class="sa-modal-body">
+            <div id="sa-subscription-card"></div>
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:14px;margin-bottom:16px;">
+                <button id="sa-charge-btn-renewal" style="width:100%;background:#0369a1;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:800;font-size:0.78rem;cursor:pointer;" onclick="saOpenChargeModal('renewal')">🔄 Request Renewal Charge</button>
+                <div id="sa-subscription-charge-hint" style="font-size:0.66rem;color:#9a3412;margin-top:8px;line-height:1.5;">Built from a <a href="#" onclick="event.preventDefault();openSaPlansModal();" style="color:#9a3412;">Subscription Plan</a> and sent to the Admin, who must Accept before the amount is deducted — once accepted, the plan's duration is added to the wallet's subscription.</div>
+            </div>
+            <div class="sa-modal-section-label" style="font-size:0.78rem;font-weight:800;color:var(--dark);margin-bottom:8px;">🧾 Renewal Charge Requests</div>
+            <div id="sa-subscription-charge-requests"></div>
         </div>
     </div>
 </div>
@@ -1682,6 +1703,9 @@ function saCountRecentWalletEvents(list, hours, predicate) {
 function saDeductWalletCharge(adminId, amount, chargeType, note){
     const data = saReadLibrary(adminId) || {};
     const wallet = saEnsureWalletShape(data.wallet);
+    if (!wallet.setup || !wallet.setup.done) {
+        throw new Error('First-Time Wallet Setup & AI Video eKYC is not completed yet for this wallet. ' + (chargeType === 'maintenance' ? 'Annual Maintenance' : 'Penalty') + ' cannot be applied until the library owner finishes it.');
+    }
     if (wallet.status === 'frozen') {
         throw new Error('This wallet is frozen (Reason: ' + (wallet.freezeReason || '—') + '). No charges — including Penalty — can be applied until it is unfrozen.');
     }
@@ -1710,6 +1734,9 @@ function saDeductWalletCharge(adminId, amount, chargeType, note){
 function saRequestWalletRenewalCharge(adminId, amount, note){
     const data = saReadLibrary(adminId) || {};
     const wallet = saEnsureWalletShape(data.wallet);
+    if (!wallet.setup || !wallet.setup.done) {
+        throw new Error('First-Time Wallet Setup & AI Video eKYC is not completed yet for this wallet. A renewal charge cannot be requested until the library owner finishes it.');
+    }
     if (wallet.status === 'frozen') {
         throw new Error('This wallet is frozen (Reason: ' + (wallet.freezeReason || '—') + '). A renewal charge cannot be requested until it is unfrozen.');
     }
@@ -2245,6 +2272,8 @@ function saRenderAdminsPanel(){
             ? ` <span title="Subscription: ${subInfo.label}" style="color:${subInfo.cls === 'expired' ? '#dc2626' : '#d97706'};">${subInfo.cls === 'expired' ? '⚠️' : '⏰'}</span>` : '';
         const walletBtn = a.discontinued ? ''
             : `<button class="sa-mini-btn sa-mini-btn-access" style="background:#fffbeb;border-color:#f59e0b;color:#92400e;position:relative;" onclick="openSaWalletModal('${a.id}')">💰 Wallet: ₹${adminWallet.balance || 0}${walletStatusIcon}${walletReopenPending ? '<span class="dot" style="margin-left:6px;"></span>' : ''}${subReminder}</button>`;
+        const subscriptionBtn = a.discontinued ? ''
+            : `<button class="sa-mini-btn sa-mini-btn-access" style="background:#eef2ff;border-color:#c7d2fe;color:#4338ca;" onclick="openSaSubscriptionModal('${a.id}')">💳 Subscription${subReminder}</button>`;
 
         const passRowHtml = a.passwordSet
             ? `<div class="v mono">${a.password}</div>`
@@ -2276,7 +2305,7 @@ function saRenderAdminsPanel(){
             <td><span class="type-tag">${a.type}</span></td>
             <td>${pwdBadge}</td>
             <td>${statusBadge}${ticketBlocked ? `<div style="margin-top:4px;"><span class="badge" style="background:#fef3c7;color:#92400e;">${tmStatusLabel(adminTicketRestriction).text}</span></div>` : ''}</td>
-            <td><div class="sa-admin-actions">${accessBtn}${walletBtn}${settingBtn}${exportBtn}${a.discontinued ? '<span style="font-size:0.72rem;color:var(--grey);">No other actions available</span>' : ''}</div></td>
+            <td><div class="sa-admin-actions">${accessBtn}${walletBtn}${subscriptionBtn}${settingBtn}${exportBtn}${a.discontinued ? '<span style="font-size:0.72rem;color:var(--grey);">No other actions available</span>' : ''}</div></td>
         </tr>`;
     }).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--grey);padding:20px;">${searchTerm ? 'No admin found matching "'+searchTerm+'".' : 'No admin accounts found.'}</td></tr>`;
     renderSaStudentAccessTable();
@@ -3662,8 +3691,9 @@ function saRefreshChargeButtonsState(wallet){
     const rBtn = document.getElementById('sa-charge-btn-renewal');
     const hint = document.getElementById('sa-charge-limit-hint');
     if (!mBtn || !pBtn || !rBtn || !hint) return;
+    const setupDone = !!(wallet.setup && wallet.setup.done);
     const isDeactivated = wallet.status === 'deactivated';
-    const canChargeAtAll = wallet.status === 'active' || wallet.status === 'deactivated';
+    const canChargeAtAll = setupDone && (wallet.status === 'active' || wallet.status === 'deactivated');
 
     mBtn.disabled = !canChargeAtAll || isDeactivated;
     rBtn.disabled = !canChargeAtAll || isDeactivated;
@@ -3671,7 +3701,8 @@ function saRefreshChargeButtonsState(wallet){
     [mBtn, pBtn, rBtn].forEach(b => { b.style.opacity = b.disabled ? '.45' : '1'; b.style.cursor = b.disabled ? 'not-allowed' : 'pointer'; });
 
     const hints = ['Maintenance &amp; Penalty deduct immediately (balance may go negative). Renewal charges are sent to the Admin, who must Accept before the amount is deducted.'];
-    if (isDeactivated) hints.push('⏸ Wallet is Deactivated — Annual Maintenance and Renewal Charge requests are blocked until the Admin reactivates it. Penalty can still be applied.');
+    if (!setupDone) hints.push('🚫 First-Time Wallet Setup &amp; AI Video eKYC is not completed yet — Annual Maintenance, Penalty and Renewal Charge are all blocked until the library owner finishes it.');
+    else if (isDeactivated) hints.push('⏸ Wallet is Deactivated — Annual Maintenance and Renewal Charge requests are blocked until the Admin reactivates it. Penalty can still be applied.');
     else if (!canChargeAtAll) hints.push('⛔ No charges can be applied while the wallet is closing or permanently closed.');
     hint.innerHTML = hints.filter(Boolean).join('<br>');
 }
@@ -3998,7 +4029,6 @@ function renderSaWalletModal(){
     saRenderFreezePanel(wallet);
     saRenderFirstSetupPanel(wallet);
     saRenderEkycPanel(wallet);
-    saRenderWalletSubscriptionCard(wallet);
     saRenderWalletChargeRequests(wallet);
     saRenderWalletLockHistory(wallet);
     document.getElementById('sa-wallet-balance').innerText = '₹' + (wallet.balance || 0);
@@ -4046,8 +4076,24 @@ function saFindWalletTransactionById(wallet, txnId){
     if (!wallet || !txnId) return null;
     return (wallet.transactions || []).find(t => t.id === txnId) || null;
 }
+function openSaSubscriptionModal(adminId){
+    _saWalletAdminId = adminId;
+    document.getElementById('sa-subscription-admin-id').innerText = adminId;
+    renderSaSubscriptionModal();
+    document.getElementById('sa-subscription-modal').style.display = 'flex';
+}
+function closeSaSubscriptionModal(){
+    document.getElementById('sa-subscription-modal').style.display = 'none';
+    _saWalletAdminId = null;
+}
+function renderSaSubscriptionModal(){
+    if (!_saWalletAdminId) return;
+    const wallet = saGetWallet(_saWalletAdminId);
+    saRenderWalletSubscriptionCard(wallet);
+    saRenderSubscriptionChargeRequests(wallet);
+}
 function saRenderWalletSubscriptionCard(wallet){
-    const el = document.getElementById('sa-wallet-subscription-card');
+    const el = document.getElementById('sa-subscription-card');
     if (!el) return;
     const sub = wallet.subscription;
     const info = saSubscriptionStatusInfo(sub);
@@ -4186,6 +4232,10 @@ const SA_CHARGE_META = {
 function saOpenChargeModal(type){
     if (!_saWalletAdminId) return;
     const wallet = saGetWallet(_saWalletAdminId);
+    if (!wallet.setup || !wallet.setup.done) {
+        alert('🚫 First-Time Wallet Setup & AI Video eKYC is not completed yet for this wallet. Annual Maintenance, Penalty and Renewal Charge are all blocked until the library owner finishes it.');
+        return;
+    }
     if (type !== 'penalty' && wallet.status !== 'active') {
         alert('❌ ' + (wallet.status === 'deactivated' ? 'This wallet is Deactivated — Annual Maintenance and Renewal Charge requests are blocked until the Admin reactivates it.' : 'This charge can only be applied while the wallet is Active.'));
         return;
@@ -4303,23 +4353,40 @@ function saConfirmChargeModal(){
     } catch (e) { alert('❌ ' + e.message); return; }
     saCloseChargeModal();
     renderSaWalletModal();
+    if (document.getElementById('sa-subscription-modal') && document.getElementById('sa-subscription-modal').style.display === 'flex') {
+        renderSaSubscriptionModal();
+    }
     saRenderAdminsPanel();
 }
 function saRenderWalletChargeRequests(wallet){
     const el = document.getElementById('sa-wallet-charge-requests');
     if (!el) return;
-    const CHARGE_LABELS = { maintenance: '🔧 Annual Maintenance Charge', penalty: '⚠️ Penalty', renewal: '🔄 Subscription Renewal Charge' };
-    // Combine: (a) renewal requests (which go through an Accept/Reject flow), and
-    // (b) immediate maintenance/penalty deductions (no approval needed) — into one
-    // chronological "Past Charge Requests" log, since both represent Super Admin-initiated charges.
-    const renewalEntries = (wallet.chargeRequests || []).map(rq => ({
-        date: rq.requestedAt, amount: rq.amount, note: rq.note, type: 'renewal', status: rq.status, decisionReason: rq.decisionReason, planName: rq.planName
-    }));
-    const directEntries = (wallet.transactions || []).filter(t => t.isSuperAdminCharge).map(t => ({
+    const CHARGE_LABELS = { maintenance: '🔧 Annual Maintenance Charge', penalty: '⚠️ Penalty' };
+    // Immediate maintenance/penalty deductions only (no approval needed). Renewal Charge requests
+    // now have their own dedicated history inside the Subscription modal — see
+    // saRenderSubscriptionChargeRequests below.
+    const directEntries = (wallet.transactions || []).filter(t => t.isSuperAdminCharge && t.chargeType !== 'renewal').map(t => ({
         date: t.date, amount: t.amount, note: t.note, type: t.chargeType, status: 'Deducted', decisionReason: null, planName: null
     }));
-    const all = renewalEntries.concat(directEntries).sort((a, b) => new Date(b.date) - new Date(a.date));
-    if (!all.length) { el.innerHTML = '<div style="text-align:center;color:var(--grey);font-size:0.78rem;padding:20px 10px;">No maintenance, penalty, or renewal charges have been raised for this wallet yet.</div>'; return; }
+    const all = directEntries.sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (!all.length) { el.innerHTML = '<div style="text-align:center;color:var(--grey);font-size:0.78rem;padding:20px 10px;">No maintenance or penalty charges have been raised for this wallet yet.</div>'; return; }
+    el.innerHTML = all.map(rq => {
+        const statusHtml = '<span style="color:#16a34a;font-weight:800;">✅ Deducted</span>';
+        const label = (CHARGE_LABELS[rq.type] || 'Charge') + (rq.planName ? ' (' + rq.planName + ')' : '');
+        return `<div style="background:#fff;border:1px solid #fed7aa;border-radius:10px;padding:10px;margin-bottom:8px;font-size:0.74rem;">
+            <div style="display:flex;justify-content:space-between;"><strong>${label} — ₹${rq.amount}</strong><span>${saFmtWalletDate(rq.date)}</span></div>
+            ${rq.note ? `<div style="color:var(--grey);margin-top:2px;">${rq.note}</div>` : ''}
+            <div style="margin-top:4px;">${statusHtml}</div>
+        </div>`;
+    }).join('');
+}
+// Renewal Charge Requests, shown only inside the Subscription modal — these are the ones that go
+// through the Accept/Reject flow with the Admin, unlike the immediate maintenance/penalty charges.
+function saRenderSubscriptionChargeRequests(wallet){
+    const el = document.getElementById('sa-subscription-charge-requests');
+    if (!el) return;
+    const all = (wallet.chargeRequests || []).slice().sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
+    if (!all.length) { el.innerHTML = '<div style="text-align:center;color:var(--grey);font-size:0.78rem;padding:20px 10px;">No renewal charge requests have been raised for this wallet yet.</div>'; return; }
     el.innerHTML = all.map(rq => {
         const statusHtml = rq.status === 'Pending'
             ? '<span style="color:#0369a1;font-weight:800;">🕓 Pending — waiting for Admin</span>'
@@ -4330,9 +4397,9 @@ function saRenderWalletChargeRequests(wallet){
                     : rq.status === 'Superseded'
                         ? '<span style="color:#64748b;font-weight:800;">↩️ Replaced by a newer request</span>'
                         : '<span style="color:#16a34a;font-weight:800;">✅ Deducted</span>';
-        const label = (CHARGE_LABELS[rq.type] || 'Charge') + (rq.planName ? ' (' + rq.planName + ')' : '');
+        const label = '🔄 Subscription Renewal Charge' + (rq.planName ? ' (' + rq.planName + ')' : '');
         return `<div style="background:#fff;border:1px solid #fed7aa;border-radius:10px;padding:10px;margin-bottom:8px;font-size:0.74rem;">
-            <div style="display:flex;justify-content:space-between;"><strong>${label} — ₹${rq.amount}</strong><span>${saFmtWalletDate(rq.date)}</span></div>
+            <div style="display:flex;justify-content:space-between;"><strong>${label} — ₹${rq.amount}</strong><span>${saFmtWalletDate(rq.requestedAt)}</span></div>
             ${rq.note ? `<div style="color:var(--grey);margin-top:2px;">${rq.note}</div>` : ''}
             <div style="margin-top:4px;">${statusHtml}</div>
             ${rq.status === 'Rejected' && rq.decisionReason ? `<div style="color:#991b1b;margin-top:4px;">Reason: ${rq.decisionReason}</div>` : ''}
