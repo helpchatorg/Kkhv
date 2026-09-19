@@ -1119,16 +1119,11 @@
 
             <div class="sa-wallet-history-tabs" style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border);">
                 <button type="button" class="sa-wallet-history-tab-btn active" id="sa-wallet-htab-txns" onclick="saSwitchWalletHistoryTab('txns')">📜 Transaction History</button>
-                <button type="button" class="sa-wallet-history-tab-btn" id="sa-wallet-htab-charges" onclick="saSwitchWalletHistoryTab('charges')">🧾 Past Charge Requests</button>
                 <button type="button" class="sa-wallet-history-tab-btn" id="sa-wallet-htab-lock" onclick="saSwitchWalletHistoryTab('lock')">🔒 Activate/Deactivate/Closure/eKYC Log</button>
             </div>
 
             <div id="sa-wallet-htab-panel-txns" class="sa-wallet-history-tab-panel">
                 <div id="sa-wallet-tx-list" style="max-height:320px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;scroll-behavior:smooth;border:1px solid var(--border);border-radius:12px;padding:8px;"></div>
-            </div>
-
-            <div id="sa-wallet-htab-panel-charges" class="sa-wallet-history-tab-panel" style="display:none;">
-                <div id="sa-wallet-charge-requests"></div>
             </div>
 
             <div id="sa-wallet-htab-panel-lock" class="sa-wallet-history-tab-panel" style="display:none;">
@@ -2197,12 +2192,12 @@ function saRenderDueForRenewalPanel(){
         '<div style="font-size:0.9rem;font-weight:900;color:#9a3412;margin-bottom:10px;">📅 Subscriptions Due for Renewal (' + due.length + ')</div>' +
         due.map(x => {
             const isExpired = x.info.cls === 'expired';
-            return '<div onclick="openSaWalletModal(\'' + x.admin.id + '\')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:#fff;border:1px solid ' + (isExpired ? '#fecaca' : '#fde68a') + ';border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;">' +
+            return '<div onclick="openSaSubscriptionModal(\'' + x.admin.id + '\')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:#fff;border:1px solid ' + (isExpired ? '#fecaca' : '#fde68a') + ';border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;">' +
                 '<div>' +
                     '<div style="font-size:0.8rem;font-weight:800;">' + x.admin.id + (x.wallet.subscription && x.wallet.subscription.planName ? ' — ' + x.wallet.subscription.planName : '') + '</div>' +
                     '<div style="font-size:0.68rem;color:' + (isExpired ? '#991b1b' : '#92400e') + ';font-weight:700;margin-top:2px;">' + (isExpired ? '⚠️' : '⏰') + ' ' + x.info.label + '</div>' +
                 '</div>' +
-                '<span style="font-size:0.68rem;font-weight:800;color:#0369a1;white-space:nowrap;">Open Wallet →</span>' +
+                '<span style="font-size:0.68rem;font-weight:800;color:#0369a1;white-space:nowrap;">Manage Subscription →</span>' +
             '</div>';
         }).join('') +
     '</div>';
@@ -2273,7 +2268,7 @@ function saRenderAdminsPanel(){
         const walletBtn = a.discontinued ? ''
             : `<button class="sa-mini-btn sa-mini-btn-access" style="background:#fffbeb;border-color:#f59e0b;color:#92400e;position:relative;" onclick="openSaWalletModal('${a.id}')">💰 Wallet: ₹${adminWallet.balance || 0}${walletStatusIcon}${walletReopenPending ? '<span class="dot" style="margin-left:6px;"></span>' : ''}${subReminder}</button>`;
         const subscriptionBtn = a.discontinued ? ''
-            : `<button class="sa-mini-btn sa-mini-btn-access" style="background:#eef2ff;border-color:#c7d2fe;color:#4338ca;" onclick="openSaSubscriptionModal('${a.id}')">💳 Subscription${subReminder}</button>`;
+            : `<button class="sa-mini-btn sa-mini-btn-access" style="background:#eef2ff;border-color:#c7d2fe;color:#4338ca;" onclick="openSaSubscriptionModal('${a.id}')">💳 Manage Subscription${subReminder}</button>`;
 
         const passRowHtml = a.passwordSet
             ? `<div class="v mono">${a.password}</div>`
@@ -4029,7 +4024,6 @@ function renderSaWalletModal(){
     saRenderFreezePanel(wallet);
     saRenderFirstSetupPanel(wallet);
     saRenderEkycPanel(wallet);
-    saRenderWalletChargeRequests(wallet);
     saRenderWalletLockHistory(wallet);
     document.getElementById('sa-wallet-balance').innerText = '₹' + (wallet.balance || 0);
     const list = document.getElementById('sa-wallet-tx-list');
@@ -4429,7 +4423,7 @@ function saRenderWalletLockHistory(wallet){
         '</div>';
 }
 function saSwitchWalletHistoryTab(tab){
-    ['charges','txns','lock'].forEach(t => {
+    ['txns','lock'].forEach(t => {
         const btn = document.getElementById('sa-wallet-htab-' + t);
         const panel = document.getElementById('sa-wallet-htab-panel-' + t);
         if (btn) btn.classList.toggle('active', t === tab);
